@@ -37,7 +37,7 @@ const FFVkCodecMap ff_vk_codec_map[AV_CODEC_ID_FIRST_AUDIO] = {
                            0,
                            0,
                            FF_VK_EXT_VIDEO_DECODE_AV1,
-                           0x01000000 /* TODO fix this */
+                           VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR
     },
 };
 
