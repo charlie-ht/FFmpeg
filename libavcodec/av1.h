@@ -121,6 +121,8 @@ enum {
     AV1_DIV_LUT_NUM       = 257,
 
     AV1_MAX_LOOP_FILTER = 63,
+
+    AV1_RESTORATION_TILESIZE_MAX = 256,
 };
 
 
