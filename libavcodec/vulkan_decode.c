@@ -1118,8 +1118,10 @@ int ff_vk_decode_init(AVCodecContext *avctx)
     VkVideoDecodeH265SessionParametersCreateInfoKHR h265_params = {
         .sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H265_SESSION_PARAMETERS_CREATE_INFO_KHR,
     };
+    StdVideoAV1SequenceHeader av1_empty_seq_hdr;
     VkVideoDecodeAV1SessionParametersCreateInfoKHR av1_params = {
         .sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_SESSION_PARAMETERS_CREATE_INFO_KHR,
+        .pStdSequenceHeader = &av1_empty_seq_hdr, /* Required to be non-NULL */
     };
     VkVideoSessionParametersCreateInfoKHR session_params_create = {
         .sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_PARAMETERS_CREATE_INFO_KHR,
@@ -1137,6 +1139,8 @@ int ff_vk_decode_init(AVCodecContext *avctx)
         .ycbcrModel = VK_SAMPLER_YCBCR_MODEL_CONVERSION_RGB_IDENTITY,
         .ycbcrRange = avctx->color_range == AVCOL_RANGE_MPEG, /* Ignored */
     };
+
+    memset(&av1_empty_seq_hdr, 0, sizeof(StdVideoAV1SequenceHeader));
 
     err = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_VULKAN);
     if (err < 0)
