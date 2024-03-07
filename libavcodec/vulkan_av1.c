@@ -257,11 +257,22 @@ static int vk_av1_start_frame(AVCodecContext          *avctx,
     /* Fill in references */
     for (int i = 0; i < AV1_NUM_REF_FRAMES; i++) {
         const AV1Frame *ref_frame = &s->ref[i];
+        AV1VulkanDecodePicture *hp = ref_frame->hwaccel_picture_private;
+        int found = 0;
+
         if (s->ref[i].f->pict_type == AV_PICTURE_TYPE_NONE)
             continue;
 
-        err = vk_av1_fill_pict(avctx, &ap->ref_src[i], &vp->ref_slots[i],
-                               &vp->refs[i], &ap->std_ref_info[i], &ap->vkav1_refs[i],
+        for (int j = 0; j < AV1_NUM_REF_FRAMES; j++) {
+            if (vp->ref_slots[j].slotIndex == hp->frame_id) {
+                found = 1;
+                break;
+            }
+        }
+        if (found)
+            continue;
+        err = vk_av1_fill_pict(avctx, &ap->ref_src[ref_count], &vp->ref_slots[ref_count],
+                               &vp->refs[ref_count], &ap->std_ref_info[ref_count], &ap->vkav1_refs[ref_count],
                                ref_frame, 0, 0);
         if (err < 0)
             return err;
@@ -287,7 +298,15 @@ static int vk_av1_start_frame(AVCodecContext          *avctx,
     };
 
     for (unsigned i = 0; i < STD_VIDEO_AV1_REFS_PER_FRAME; i++) {
-        ap->av1_pic_info.referenceNameSlotIndices[i] = vp->ref_slots[frame_header->ref_frame_idx[i]].slotIndex;
+        const int idx = pic->raw_frame_header->ref_frame_idx[i];
+        const AV1Frame *ref_frame = &s->ref[idx];
+        AV1VulkanDecodePicture *hp = ref_frame->hwaccel_picture_private;
+
+        ap->av1_pic_info.referenceNameSlotIndices[i] = -1;
+        if (s->ref[i].f->pict_type == AV_PICTURE_TYPE_NONE)
+            continue;
+
+        ap->av1_pic_info.referenceNameSlotIndices[i] = hp->frame_id;
     }
 
     vp->decode_info = (VkVideoDecodeInfoKHR) {
