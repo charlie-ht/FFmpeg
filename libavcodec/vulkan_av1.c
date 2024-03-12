@@ -59,9 +59,21 @@ typedef struct AV1VulkanDecodePicture {
     VkVideoDecodeAV1PictureInfoKHR     av1_pic_info;
 
     /* Picture refs */
-    const AV1Frame                     *ref_src   [AV1_NUM_REF_FRAMES];
+
+// Q: I think there could be problem here not also modeling the "buffer
+// pool", which is specified as containing 10 frames. There are some
+// bitstreams which use all 8 reference slots, and further wish to
+// store a frame for later use (so called "delayed" frame mode). In
+// that case, this data structure doesn't support keeping that many
+// references around. E.g.
+//  const AV1Frame buffer_pool[10];
+//  const AV1Frame VBI[8];
+
+// Q: should this not be REFS_PER_FRAME ? What is the 8th index used for?
+    const AV1Frame                     *ref_src   [AV1_NUM_REF_FRAMES]; // c.f VBI in E.2 of AV1 spec?
     StdVideoDecodeAV1ReferenceInfo     std_ref_info[AV1_NUM_REF_FRAMES];
     VkVideoDecodeAV1DpbSlotInfoKHR     vkav1_refs[AV1_NUM_REF_FRAMES];
+    int32_t                            referenceNameSlotIndices[AV1_REFS_PER_FRAME];
 
     uint8_t frame_id_set;
     uint8_t frame_id;
@@ -213,12 +225,15 @@ static int vk_av1_create_params(AVCodecContext *avctx, AVBufferRef **buf)
     return 0;
 }
 
+static int frame_counter = 0;
+
 static int vk_av1_start_frame(AVCodecContext          *avctx,
                               av_unused const uint8_t *buffer,
                               av_unused uint32_t       size)
 {
     int err;
     int ref_count = 0;
+    uint32_t unique_refs = 0;
     AV1DecContext *s = avctx->priv_data;
     const AV1Frame *pic = &s->cur_frame;
     FFVulkanDecodeContext *dec = avctx->internal->hwaccel_priv_data;
@@ -234,6 +249,8 @@ static int vk_av1_start_frame(AVCodecContext          *avctx,
                                                          STD_VIDEO_AV1_FRAME_RESTORATION_TYPE_WIENER,
                                                          STD_VIDEO_AV1_FRAME_RESTORATION_TYPE_SGRPROJ };
     int uses_lr;
+
+    printf(";;; start_frame %d\n", frame_counter++);
 
     if (!dec->session_params) {
         err = vk_av1_create_params(avctx, &dec->session_params);
@@ -255,25 +272,26 @@ static int vk_av1_start_frame(AVCodecContext          *avctx,
     }
 
     /* Fill in references */
-    for (int i = 0; i < AV1_NUM_REF_FRAMES; i++) {
-        const AV1Frame *ref_frame = &s->ref[i];
+    for (int i = 0; i < AV1_REFS_PER_FRAME; i++) {
+        int idx = pic->raw_frame_header->ref_frame_idx[i];
+        const AV1Frame *ref_frame = &s->ref[idx];
         AV1VulkanDecodePicture *hp = ref_frame->hwaccel_picture_private;
-        int found = 0;
 
-        if (s->ref[i].f->pict_type == AV_PICTURE_TYPE_NONE)
+        if (frame_header->frame_type == 0 || s->ref[i].f->pict_type == AV_PICTURE_TYPE_NONE) {
+            ap->referenceNameSlotIndices[i] = -1;
             continue;
-
-        for (int j = 0; j < AV1_NUM_REF_FRAMES; j++) {
-            if (vp->ref_slots[j].slotIndex == hp->frame_id) {
-                found = 1;
-                break;
-            }
         }
-        if (found)
+
+        if (unique_refs & (1 << idx))
             continue;
-        err = vk_av1_fill_pict(avctx, &ap->ref_src[ref_count], &vp->ref_slots[ref_count],
-                               &vp->refs[ref_count], &ap->std_ref_info[ref_count], &ap->vkav1_refs[ref_count],
-                               ref_frame, 0, 0);
+        unique_refs |= (1 << idx);
+
+        // Sanity check, I believe this will fail for some content...
+        assert(hp->frame_id >= 0 && hp->frame_id <= 8);
+        ap->referenceNameSlotIndices[i] = hp->frame_id;
+        err = vk_av1_fill_pict(avctx, &ap->ref_src[idx], &vp->ref_slots[ref_count],
+                               &vp->refs[ref_count], &ap->std_ref_info[ref_count],
+                               &ap->vkav1_refs[ref_count], ref_frame, 0, 0);
         if (err < 0)
             return err;
 
@@ -296,25 +314,29 @@ static int vk_av1_start_frame(AVCodecContext          *avctx,
         .pTileOffsets = ap->tile_offsets_s,
         .pTileSizes = ap->tile_sizes,
     };
-
-    for (unsigned i = 0; i < STD_VIDEO_AV1_REFS_PER_FRAME; i++) {
-        const int idx = pic->raw_frame_header->ref_frame_idx[i];
-        const AV1Frame *ref_frame = &s->ref[idx];
-        AV1VulkanDecodePicture *hp = ref_frame->hwaccel_picture_private;
-
-        ap->av1_pic_info.referenceNameSlotIndices[i] = -1;
-        if (s->ref[i].f->pict_type == AV_PICTURE_TYPE_NONE)
-            continue;
-
-        ap->av1_pic_info.referenceNameSlotIndices[i] = hp->frame_id;
+    for (int i = 0; i < AV1_REFS_PER_FRAME; ++i) {
+        ap->av1_pic_info.referenceNameSlotIndices[i] = ap->referenceNameSlotIndices[i];
     }
+
+    printf("%d| slot for curr pic %d\n", frame_counter, vp->ref_slot.slotIndex);
+    printf("%d| refresh_frame_flags: %0x\n", frame_counter, frame_header->refresh_frame_flags);
+    printf("%d| referenceNameSlotIndex: ", frame_counter);
+    for (int i = 0; i < STD_VIDEO_AV1_REFS_PER_FRAME; i++) {
+        printf("%02d ", i);
+    }
+    printf("\n%d| referenceNameSlotIndex: ", frame_counter);
+    for (int i = 0; i < STD_VIDEO_AV1_REFS_PER_FRAME; i++) {
+    printf("%02d ", ap->av1_pic_info.referenceNameSlotIndices[i]);
+    }
+    printf("\n");
+    printf("%d| %d unique references\n", frame_counter, av_popcount_c(unique_refs));
 
     vp->decode_info = (VkVideoDecodeInfoKHR) {
         .sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_INFO_KHR,
         .pNext = &ap->av1_pic_info,
         .flags = 0x0,
         .pSetupReferenceSlot = &vp->ref_slot,
-        .referenceSlotCount = ref_count,
+        .referenceSlotCount = av_popcount_c(unique_refs),
         .pReferenceSlots = vp->ref_slots,
         .dstPictureResource = (VkVideoPictureResourceInfoKHR) {
             .sType = VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR,
@@ -562,6 +584,8 @@ static int vk_av1_end_frame(AVCodecContext *avctx)
     FFVulkanDecodePicture *vp = &ap->vp;
     FFVulkanDecodePicture *rvp[AV1_NUM_REF_FRAMES] = { 0 };
     AVFrame *rav[AV1_NUM_REF_FRAMES] = { 0 };
+    uint32_t seen_slots = 0;
+    int ref_idx = 0;
 
     if (!ap->tile_count)
         return 0;
@@ -572,12 +596,17 @@ static int vk_av1_end_frame(AVCodecContext *avctx)
             return err;
     }
 
+// vp->decode_info.referenceSlotCount is a unique set of references
+// there must be some kind of mapping from their slot index to the "VBI"
+// to get their AV1Frame's back.
     for (int i = 0; i < vp->decode_info.referenceSlotCount; i++) {
-        const AV1Frame *rp = ap->ref_src[i];
-        AV1VulkanDecodePicture *rhp = rp->hwaccel_picture_private;
-
-        rvp[i] = &rhp->vp;
-        rav[i] = ap->ref_src[i]->f;
+        int32_t slot_idx = vp->decode_info.pReferenceSlots[i].slotIndex;
+        if (seen_slots & (1 << slot_idx))
+            continue;
+        seen_slots |= (1 << slot_idx);
+        rvp[ref_idx] = ap->ref_src[slot_idx]->hwaccel_picture_private;
+        rav[ref_idx] = ap->ref_src[slot_idx]->f;
+        ref_idx++;
     }
 
     av_log(avctx, AV_LOG_VERBOSE, "Decoding frame, %"SIZE_SPECIFIER" bytes, %i tiles\n",
@@ -591,6 +620,7 @@ static void vk_av1_free_frame_priv(FFRefStructOpaque _hwctx, void *data)
     AVHWDeviceContext *hwctx = _hwctx.nc;
     AV1VulkanDecodePicture *ap = data;
 
+// Q: Which issue is this?
     /* Workaround for a spec issue. */
     if (ap->frame_id_set)
         ap->dec->frame_id_alloc_mask &= ~(1 << ap->frame_id);

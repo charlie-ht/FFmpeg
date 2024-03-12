@@ -477,8 +477,9 @@ int ff_vk_decode_frame(AVCodecContext *avctx,
         /* All references (apart from the current) for non-layered refs */
 
         for (int i = 0; i < vp->decode_info.referenceSlotCount; i++) {
-            AVFrame *ref_frame = rpic[i];
-            FFVulkanDecodePicture *rvp = rvkp[i];
+            int32_t slot_idx = vp->decode_info.pReferenceSlots[i].slotIndex;
+            AVFrame *ref_frame = rpic[slot_idx];
+            FFVulkanDecodePicture *rvp = rvkp[slot_idx];
             AVFrame *ref = rvp->dpb_frame ? rvp->dpb_frame : ref_frame;
 
             err = ff_vk_exec_add_dep_frame(&ctx->s, exec, ref,
