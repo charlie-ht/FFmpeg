@@ -170,6 +170,9 @@ static int vk_av1_create_params(AVCodecContext *avctx, AVBufferRef **buf)
         seq->color_config.high_bitdepth ? 10 : 8,
         .subsampling_x = seq->color_config.subsampling_x,
         .subsampling_y = seq->color_config.subsampling_y,
+        .color_primaries = seq->color_config.color_primaries,
+        .transfer_characteristics = seq->color_config.transfer_characteristics,
+        .matrix_coefficients = seq->color_config.matrix_coefficients,
     };
 
     av1_sequence_header = (StdVideoAV1SequenceHeader) {
@@ -202,6 +205,8 @@ static int vk_av1_create_params(AVCodecContext *avctx, AVBufferRef **buf)
         .delta_frame_id_length_minus_2 = seq->delta_frame_id_length_minus_2,
         .additional_frame_id_length_minus_1 = seq->additional_frame_id_length_minus_1,
         .order_hint_bits_minus_1 = seq->order_hint_bits_minus_1,
+        .seq_force_integer_mv = seq->seq_force_integer_mv,
+        .seq_force_screen_content_tools = seq->seq_force_screen_content_tools,
         .pTimingInfo = &av1_timing_info,
         .pColorConfig = &av1_color_config,
     };
